@@ -1,0 +1,122 @@
+---
+title: "Reproducible Research - Assignment Week 4"
+author: "Arthi Murugesan"
+date: "March 27, 2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Synopsis
+
+In this report we will explore the NOAA Storm database. The NOAA Storm database comprises of storms and severe weather events that occured in United States. In this report, we will be answering 2 questions 
+
+1) Across the United States, which types of events (as indicated in the 𝙴𝚅𝚃𝚈𝙿𝙴 variable) are most harmful with respect to population health?
+2) Across the United States, which types of events have the greatest economic consequences?
+
+#Data Processing
+
+```{r cachedChunk, cache=TRUE}
+rm(list=ls())
+if (!file.exists("storm.csv"))
+    {
+      url<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+      download.file(url, destfile = "repdata_data_StormData.csv.bz2", method="curl", mode="wb")
+      #bunzip2("repdata_data_StormData.csv.bz2","storm.csv", overwrite=T, remove=F)      
+    }
+
+storm<- read.table("repdata_data_StormData.csv.bz2", header = TRUE, sep = ",", stringsAsFactors = FALSE, na.strings="NA")
+
+#Check total number of EVTYPE
+length(unique(storm$EVTYPE))
+
+#view the top 15 unique strom EVTYPE
+head(unique(storm$EVTYPE),15)
+```
+
+There seem to some EVTYPE redundancy. The data needs to be cleaned before we can do any analysis
+```{r data_cleaning}
+storm$EVTYPE <- as.character(storm$EVTYPE)
+storm$EVTYPE[grepl("fog", storm$EVTYPE,ignore.case = TRUE)] <- "fog"
+storm$EVTYPE[grepl("cloud|funnel", storm$EVTYPE,ignore.case = TRUE)] <- "cloud"
+storm$EVTYPE[grepl("wind", storm$EVTYPE,ignore.case = TRUE)] <- "wind"
+storm$EVTYPE[grepl("thunderstorm|lightning|lighting", storm$EVTYPE,ignore.case = TRUE)] <- "lighting_thunderstorm"
+storm$EVTYPE[grepl("dust", storm$EVTYPE,ignore.case = TRUE)]  <- "dust_storm"
+storm$EVTYPE[grepl("flood", storm$EVTYPE,ignore.case = TRUE)] <- "flood"
+storm$EVTYPE[grepl("slide|erosion", storm$EVTYPE,ignore.case = TRUE)] <- "erosion"
+storm$EVTYPE[grepl("fire|smoke", storm$EVTYPE,ignore.case = TRUE)] <- "fire"
+storm$EVTYPE[grepl("hot|heat|drought|temperature record|record temperature|record high|dry", storm$EVTYPE,ignore.case = TRUE)] <- "hot_weather"
+storm$EVTYPE[grepl("tornado", storm$EVTYPE,ignore.case = TRUE)] <- "tornado"
+storm$EVTYPE[grepl("tsunami|marine|current|tide", storm$EVTYPE,ignore.case = TRUE)] <- "tsunami"
+storm$EVTYPE[grepl("rain|heavy rain|hail|precipitation|burst", storm$EVTYPE,ignore.case = TRUE)] <- "heavy_rain"
+storm$EVTYPE[grepl("freeze|cold|snow|chill", storm$EVTYPE,ignore.case = TRUE)] <- "cold_weather"
+storm$EVTYPE[grepl("wind |storm|hurricane|typhoon", storm$EVTYPE,ignore.case = TRUE)] <- "storm"
+length(unique(storm$EVTYPE))
+names(storm)
+col <- c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+analysis_data <- storm[col]
+```
+
+We managed to reduce the number of storm event types to 247 from initial 985. Looking at the different impacts of the storm in the dataset. We will analyse fatalities,injuries and property data by storm event type. However, before we get there we will need to correct the dataset for the property damage and crop damage The PROPDMGEXP and CROPDMGEXP encode the type/units of the value present in PROPDMG and CROPDMG. So the values are not uniform and that needs to be corrected. For instance, the PROPDMGEXP code of “K” is for thousands, “M” is for millions, and “B” is for billions, H for hundreds and numeric values being 10s. So converting them as H -> 1^10e2, K -> 1^10e3, M -> 1^10e6, B -> 1^10e9 and numeric -> 1^10e(numeric)  and multiplying that with the PROPDMG value will gives us an absolute damage value.
+
+
+```{r economic_damage}
+library(plyr)
+library(dplyr)
+
+#Getting the absolute value for property damage 
+unique(analysis_data$PROPDMGEXP)
+propdmg_exp<-unique(analysis_data$PROPDMGEXP)
+propdmg_exp_corrected<-c(1e3,1e6, 1, 1e9,1e6,  1,  1,1e5,1e6,  1,1e4,1e2,1e3,  1,1e7,1e2,  1, 10,1e8)
+propdmg_exp_corrected
+propdmg_final<-mapvalues(analysis_data$PROPDMGEXP, propdmg_exp, propdmg_exp_corrected)
+
+#Similary get the absolute value for crop damage
+cropdmg_exp<-unique(analysis_data$CROPDMGEXP)
+cropdmg_exp_corrected<-c(1,1e6,1e3,1e6,1e9,1,1,1e3,1e2)
+cropdmg_exp_corrected
+cropdmg_final<-mapvalues(analysis_data$CROPDMGEXP, cropdmg_exp, cropdmg_exp_corrected)
+
+analysis_data<-mutate(analysis_data, ABS_PROPDMG=as.numeric(as.character(propdmg_final))*analysis_data$PROPDMG, ABS_CROPDMG=as.numeric(as.character(propdmg_final))*analysis_data$CROPDMG)
+
+analysis_data<-analysis_data%>%group_by(EVTYPE)%>%summarize(fatalities=sum(FATALITIES), injuries=sum(INJURIES), property_damage=sum(ABS_PROPDMG),crop_damage=sum(ABS_CROPDMG))
+
+head(analysis_data)
+```
+
+
+#Results
+##Weather Condition with most human health issues
+
+As for the fatalities and injuries, I think we can club them under one single entity.
+
+```{r human_impact, cache=TRUE}
+fatal <- aggregate(fatalities ~ EVTYPE, data = analysis_data, FUN = sum)
+injury <- aggregate(injuries ~ EVTYPE, data = analysis_data, FUN = sum)
+# get most fatal
+fatal10 <- fatal[order(-fatal$fatalities), ][1:10, ]
+# get most injuries 
+injury10 <- injury[order(-injury$injuries), ][1:10, ]
+par(mfrow = c(1, 2), mar = c(12, 4, 3, 2), mgp = c(3, 1, 0), cex = 0.8)
+barplot(fatal10$fatalities, las = 3, names.arg = fatal10$EVTYPE, main = "highest fatal weather events",  ylab = "number of fatalities", col = "green")
+barplot(injury10$injuries, las = 3, names.arg = injury10$EVTYPE, main = "highest injury causing weather events", ylab = "number of injuries", col = "green")
+```
+
+
+##Weather Condition with more property damage
+
+
+```{r property_damage}
+propdmg <- aggregate(property_damage ~ EVTYPE, data = analysis_data, FUN = sum)
+# get top 10 events with highest property damage
+propdmg10 <- propdmg[order(-propdmg$property_damage), ][1:10, ]
+
+barplot(propdmg10$property_damage/(10^9), names.arg = propdmg10$EVTYPE, 
+    main = "Weather Event with biggest property damages", ylab = "Damage Cost ($ billions)", col = "green")
+```
+
+#Conclusion
+
+To summarize, we notice that Tornado are the single most weather event that causes the biggest impact to human health.Floods cause the most economic damage with respect to properties
